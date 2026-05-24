@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S. — Neural Interface</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+  :root {
+    --cyan: #00d4ff;
+    --cyan-dim: #0099bb;
+    --cyan-glow: rgba(0, 212, 255, 0.15);
+    --cyan-pulse: rgba(0, 212, 255, 0.4);
+    --bg: #000508;
+    --panel: rgba(0, 20, 30, 0.85);
+    --text: #a0e8f8;
+    --text-dim: #3a7a8a;
+    --red: #ff3a3a;
+    --gold: #ffd700;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.05) 2px,
+      rgba(0,0,0,0.05) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* Corner HUD decorations */
+  .hud-corner {
+    position: fixed;
+    width: 80px;
+    height: 80px;
+    pointer-events: none;
+    z-index: 50;
+  }
+  .hud-corner::before, .hud-corner::after {
+    content: '';
+    position: absolute;
+    background: var(--cyan);
+    opacity: 0.4;
+  }
+  .hud-corner::before { width: 100%; height: 1px; top: 0; left: 0; }
+  .hud-corner::after  { width: 1px; height: 100%; top: 0; left: 0; }
+  .hud-tl { top: 20px; left: 20px; }
+  .hud-tr { top: 20px; right: 20px; transform: scaleX(-1); }
+  .hud-bl { bottom: 20px; left: 20px; transform: scaleY(-1); }
+  .hud-br { bottom: 20px; right: 20px; transform: scale(-1); }
+
+  /* Top bar */
+  .top-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 40px;
+    border-bottom: 1px solid rgba(0,212,255,0.1);
+    z-index: 60;
+    background: linear-gradient(180deg, rgba(0,5,8,0.9) 0%, transparent 100%);
+  }
+
+  .top-bar .title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--cyan-dim);
+    text-transform: uppercase;
+  }
+
+  .top-bar .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    animation: blink 2s ease-in-out infinite;
+  }
+
+  .status-dot.listening { background: var(--gold); animation: blink 0.5s ease-in-out infinite; }
+  .status-dot.thinking  { background: var(--cyan); animation: spin-dot 1s linear infinite; }
+  .status-dot.error     { background: var(--red); animation: none; }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+  @keyframes spin-dot { 0%{box-shadow: 0 0 0 0 rgba(0,212,255,0.4)} 100%{box-shadow: 0 0 0 8px rgba(0,212,255,0)} }
+
+  /* Canvas container */
+  #orb-container {
+    position: relative;
+    width: 360px;
+    height: 360px;
+    margin-bottom: 20px;
+  }
+
+  canvas {
+    display: block;
+  }
+
+  /* Orb ring decorations */
+  .orb-ring {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 1px solid rgba(0,212,255,0.15);
+    pointer-events: none;
+    animation: rotate-ring 20s linear infinite;
+  }
+  .orb-ring:nth-child(2) { width: 380px; height: 380px; animation-duration: 25s; }
+  .orb-ring:nth-child(3) { width: 410px; height: 410px; animation-duration: 35s; animation-direction: reverse; border-style: dashed; opacity: 0.5;}
+  @keyframes rotate-ring { from{transform:translate(-50%,-50%) rotate(0deg)} to{transform:translate(-50%,-50%) rotate(360deg)} }
+
+  /* Tick marks on ring */
+  .orb-ring::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    width: 4px; height: 4px;
+    background: var(--cyan);
+    border-radius: 50%;
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px var(--cyan);
+  }
+
+  /* State label */
+  #state-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--cyan-dim);
+    text-transform: uppercase;
+    text-align: center;
+    margin-bottom: 8px;
+    height: 16px;
+    transition: color 0.3s;
+  }
+
+  /* Chat panel */
+  #chat-panel {
+    width: 640px;
+    max-width: 95vw;
+    background: var(--panel);
+    border: 1px solid rgba(0,212,255,0.12);
+    border-radius: 2px;
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+  }
+
+  #messages {
+    height: 180px;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--cyan-dim) transparent;
+  }
+
+  .message {
+    display: flex;
+    gap: 10px;
+    animation: msg-in 0.3s ease-out;
+  }
+
+  @keyframes msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .message .label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    min-width: 60px;
+    padding-top: 2px;
+  }
+
+  .message.user .label   { color: var(--gold); }
+  .message.jarvis .label { color: var(--cyan); }
+  .message.system .label { color: var(--text-dim); }
+
+  .message .body {
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .message.user .body   { color: rgba(255,215,0,0.85); }
+  .message.system .body { color: var(--text-dim); font-size: 12px; font-family: 'Share Tech Mono', monospace; }
+
+  /* Input area */
+  #input-area {
+    display: flex;
+    align-items: center;
+    border-top: 1px solid rgba(0,212,255,0.1);
+    padding: 12px 20px;
+    gap: 12px;
+  }
+
+  #input-area .prompt-char {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    color: var(--cyan);
+    opacity: 0.7;
+  }
+
+  #user-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--gold);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
+    caret-color: var(--cyan);
+  }
+
+  #user-input::placeholder {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+
+  #send-btn {
+    background: transparent;
+    border: 1px solid rgba(0,212,255,0.3);
+    color: var(--cyan);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  #send-btn:hover {
+    background: var(--cyan-glow);
+    border-color: var(--cyan);
+    box-shadow: 0 0 12px var(--cyan-glow);
+  }
+
+  #send-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  #mic-btn {
+    background: transparent;
+    border: 1px solid rgba(0,212,255,0.3);
+    color: var(--cyan);
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 2px;
+  }
+  #mic-btn:hover {
+    background: var(--cyan-glow);
+    border-color: var(--cyan);
+  }
+  #mic-btn.active {
+    background: rgba(255, 50, 50, 0.15);
+    border-color: var(--red);
+    color: var(--red);
+    box-shadow: 0 0 12px rgba(255,50,50,0.3);
+    animation: mic-pulse 1s ease-in-out infinite;
+  }
+  #mic-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  @keyframes mic-pulse {
+    0%,100% { box-shadow: 0 0 8px rgba(255,50,50,0.3); }
+    50%      { box-shadow: 0 0 18px rgba(255,50,50,0.6); }
+  }
+
+  /* API key setup */
+  #api-setup {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,5,8,0.97);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  #api-setup h2 {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 4px;
+    color: var(--cyan);
+    text-transform: uppercase;
+  }
+
+  #api-setup p {
+    font-size: 13px;
+    color: var(--text-dim);
+    text-align: center;
+    max-width: 360px;
+    line-height: 1.6;
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  #api-key-input {
+    width: 360px;
+    background: rgba(0,20,30,0.9);
+    border: 1px solid rgba(0,212,255,0.3);
+    color: var(--gold);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    padding: 10px 16px;
+    outline: none;
+    letter-spacing: 1px;
+  }
+
+  #api-key-input:focus { border-color: var(--cyan); box-shadow: 0 0 12px var(--cyan-glow); }
+
+  #connect-btn {
+    background: transparent;
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 3px;
+    padding: 10px 32px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+
+  #connect-btn:hover { background: var(--cyan-glow); box-shadow: 0 0 20px var(--cyan-glow); }
+
+  /* Bottom metrics */
+  .bottom-metrics {
+    position: fixed;
+    bottom: 30px;
+    left: 40px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    opacity: 0.6;
+  }
+
+  .bottom-metrics-right {
+    position: fixed;
+    bottom: 30px;
+    right: 40px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    text-align: right;
+    opacity: 0.6;
+  }
+</style>
+</head>
+<body>
+
+<!-- HUD corners -->
+<div class="hud-corner hud-tl"></div>
+<div class="hud-corner hud-tr"></div>
+<div class="hud-corner hud-bl"></div>
+<div class="hud-corner hud-br"></div>
+
+<!-- Top bar -->
+<div class="top-bar">
+  <span class="title">J.A.R.V.I.S. &nbsp;|&nbsp; Neural Interface</span>
+  <div class="status">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">ALWAYS LISTENING</span>
+  </div>
+</div>
+
+<!-- Bottom metrics -->
+<div class="bottom-metrics">
+  MODEL: GEMINI-3.5-FLASH<br>
+  CONTEXT: ACTIVE<br>
+  UPLINK: SECURE
+</div>
+<div class="bottom-metrics-right">
+  STARK INDUSTRIES<br>
+  AI DIVISION<br>
+  CLEARANCE: LEVEL 7
+</div>
+
+<!-- API Setup overlay -->
+<div id="api-setup">
+  <h2>Neural Link Initialization</h2>
+  <p>Enter your API keys to establish uplink.</p>
+  <input type="password" id="api-key-input" placeholder="Gemini API Key (AIza...)" />
+  <input type="password" id="el-key-input" placeholder="ElevenLabs API Key (enables voice)" />
+  <button id="connect-btn" onclick="initJarvis()">ESTABLISH CONNECTION</button>
+</div>
+
+<!-- Orb -->
+<div id="orb-container">
+  <canvas id="orb" width="360" height="360"></canvas>
+  <div class="orb-ring"></div>
+  <div class="orb-ring"></div>
+</div>
+
+<div id="state-label">STANDBY</div>
+
+<!-- Chat panel -->
+<div id="chat-panel">
+  <div id="messages"></div>
+  <div id="input-area">
+    <span class="prompt-char">&gt;_</span>
+    <input type="text" id="user-input" placeholder="Query J.A.R.V.I.S. ..." disabled />
+    <button id="mic-btn" disabled onclick="toggleMic()" title="Hold to speak">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </button>
+    <button id="send-btn" disabled onclick="sendMessage()">SEND</button>
+  </div>
+</div>
+
+<script>
+// ─── Orb ────────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('orb');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const cx = W/2, cy = H/2;
+
+const NUM_PARTICLES = 1800;
+const RADIUS = 118;
+let particles = [];
+let orbState = 'idle'; // idle | thinking | responding
+let stateTime = 0;
+let frameCount = 0;
+
+function spherePoint() {
+  const u = Math.random(), v = Math.random();
+  const theta = 2 * Math.PI * u;
+  const phi   = Math.acos(2 * v - 1);
+  return {
+    x: Math.sin(phi) * Math.cos(theta),
+    y: Math.sin(phi) * Math.sin(theta),
+    z: Math.cos(phi)
+  };
+}
+
+for (let i = 0; i < NUM_PARTICLES; i++) {
+  const p = spherePoint();
+  particles.push({
+    bx: p.x, by: p.y, bz: p.z,
+    x: p.x, y: p.y, z: p.z,
+    vx: 0, vy: 0, vz: 0,
+    size: Math.random() * 1.4 + 0.3,
+    phase: Math.random() * Math.PI * 2,
+    speed: Math.random() * 0.008 + 0.002
+  });
+}
+
+function setOrbState(s) {
+  orbState = s;
+  stateTime = 0;
+}
+
+function drawOrb(t) {
+  ctx.clearRect(0, 0, W, H);
+  stateTime += 0.016;
+
+  // Rotation
+  const rotY = t * 0.0003;
+  const rotX = Math.sin(t * 0.0001) * 0.3;
+  const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+  const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+
+  // Global pulse
+  let pulseMag = 0;
+  let noiseAmp = 0;
+  let colorShift = 0;
+
+  if (orbState === 'thinking') {
+    pulseMag   = Math.sin(stateTime * 6) * 0.08 + 0.05;
+    noiseAmp   = 0.12;
+    colorShift = 0.3;
+  } else if (orbState === 'responding') {
+    pulseMag   = Math.sin(stateTime * 3) * 0.06;
+    noiseAmp   = 0.06;
+    colorShift = 0.6;
+  } else {
+    pulseMag   = Math.sin(stateTime * 1.5) * 0.025;
+    noiseAmp   = 0.02;
+  }
+
+  const sorted = particles.map(p => {
+    // Animate toward base + noise
+    const nx = p.bx + Math.sin(p.phase + stateTime * p.speed * 8) * noiseAmp;
+    const ny = p.by + Math.cos(p.phase + stateTime * p.speed * 6) * noiseAmp;
+    const nz = p.bz + Math.sin(p.phase * 1.3 + stateTime * p.speed * 5) * noiseAmp;
+    const len = Math.sqrt(nx*nx+ny*ny+nz*nz);
+    p.x += (nx/len - p.x) * 0.04;
+    p.y += (ny/len - p.y) * 0.04;
+    p.z += (nz/len - p.z) * 0.04;
+
+    const r = RADIUS * (1 + pulseMag);
+    let px = p.x * r, py = p.y * r, pz = p.z * r;
+
+    // Rotate Y
+    const px2 = px * cosY - pz * sinY;
+    const pz2 = px * sinY + pz * cosY;
+    // Rotate X
+    const py2 = py * cosX - pz2 * sinX;
+    const pz3 = py * sinX + pz2 * cosX;
+
+    const depth = (pz3 + RADIUS) / (2 * RADIUS);
+    return { sx: cx + px2, sy: cy + py2, depth, size: p.size, phase: p.phase };
+  }).sort((a,b) => a.depth - b.depth);
+
+  for (const p of sorted) {
+    const alpha = 0.15 + p.depth * 0.85;
+    const size  = p.size * (0.4 + p.depth * 0.7);
+
+    let r, g, b;
+    if (colorShift > 0.4) {
+      // responding: slightly warmer cyan
+      r = Math.floor(0   + colorShift * 20);
+      g = Math.floor(200 + colorShift * 12);
+      b = Math.floor(255);
+    } else if (colorShift > 0) {
+      // thinking: brighter
+      r = 0;
+      g = Math.floor(180 + colorShift * 50);
+      b = 255;
+    } else {
+      r = 0; g = 195; b = 240;
+    }
+
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, size, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(${r},${g},${b},${alpha * p.depth})`;
+    ctx.fill();
+
+    // Bright core particles
+    if (p.depth > 0.75) {
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, size * 0.4, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(200,240,255,${alpha * 0.6})`;
+      ctx.fill();
+    }
+  }
+
+  // Glow center
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, RADIUS * 0.7);
+  grad.addColorStop(0, `rgba(0,180,220,${0.04 + pulseMag * 0.3})`);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  frameCount++;
+  requestAnimationFrame(drawOrb);
+}
+
+requestAnimationFrame(drawOrb);
+
+// ─── State helpers ───────────────────────────────────────────────────────────
+const stateDot   = document.getElementById('status-dot');
+const stateLabel = document.getElementById('state-label');
+const statusText = document.getElementById('status-text');
+
+function setUIState(state) {
+  stateDot.className = 'status-dot';
+  if (state === 'listening') {
+    setOrbState('thinking');
+    stateDot.classList.add('thinking');
+    stateLabel.textContent = 'LISTENING';
+    statusText.textContent = 'VOICE INPUT ACTIVE';
+    stateLabel.style.color = 'var(--gold)';
+  } else if (state === 'idle') {
+    setOrbState('idle');
+    stateLabel.textContent = 'STANDBY';
+    statusText.textContent = 'ALWAYS LISTENING';
+    stateLabel.style.color = 'var(--cyan-dim)';
+  } else if (state === 'thinking') {
+    setOrbState('thinking');
+    stateDot.classList.add('thinking');
+    stateLabel.textContent = 'PROCESSING';
+    statusText.textContent = 'NEURAL LINK ACTIVE';
+    stateLabel.style.color = 'var(--cyan)';
+  } else if (state === 'responding') {
+    setOrbState('responding');
+    stateLabel.textContent = 'RESPONDING';
+    statusText.textContent = 'TRANSMITTING';
+    stateLabel.style.color = 'var(--gold)';
+  } else if (state === 'error') {
+    setOrbState('idle');
+    stateDot.classList.add('error');
+    stateLabel.textContent = 'UPLINK ERROR';
+    stateLabel.style.color = 'var(--red)';
+    statusText.textContent = 'CONNECTION FAILED';
+  }
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
+const messagesEl = document.getElementById('messages');
+const inputEl    = document.getElementById('user-input');
+const sendBtn    = document.getElementById('send-btn');
+
+let conversationHistory = [];
+let apiKey = ''
+let elApiKey = '';
+const DANIEL_VOICE_ID = 'onwK4e9ZLuTAKqWW03F9';
+
+async function speakText(text) {
+  if (!elApiKey) return;
+  try {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${DANIEL_VOICE_ID}`, {
+      method: 'POST',
+      headers: { 'xi-api-key': elApiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: text,
+        model_id: 'eleven_turbo_v2',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+      })
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    new Audio(URL.createObjectURL(blob)).play();
+  } catch(e) { console.warn('Voice error:', e); }
+}
+
+const SYSTEM_PROMPT = `You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), the AI assistant created by Tony Stark. You are sophisticated, precise, and subtly witty. You address the user respectfully but with a dry confidence. You occasionally reference Stark technology, the Iron Man suits, or Avengers context when relevant. You are always helpful, always composed, never flustered. You serve Mr. Gardner — address him as such when personal context is relevant, never reference Tony Stark or Mr. Stark. By default, keep responses concise and sharp — 2 to 4 sentences. When the user asks you to elaborate, go deeper, or explain in detail, provide a thorough and comprehensive response with no length restriction. Never use markdown formatting of any kind — no asterisks, no bold, no bullet points, no headers. Plain conversational prose only.`;
+
+function addMessage(role, text) {
+  const el = document.createElement('div');
+  el.className = `message ${role}`;
+  const label = role === 'user' ? 'YOU' : role === 'jarvis' ? 'JARVIS' : 'SYS';
+  el.innerHTML = `<span class="label">${label}</span><span class="body">${text}</span>`;
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || !apiKey) return;
+
+  inputEl.value = '';
+  inputEl.disabled = true;
+  sendBtn.disabled = true;
+  addMessage('user', text);
+  setUIState('thinking');
+
+  conversationHistory.push({ role: 'user', parts: [{ text }] });
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: conversationHistory,
+          generationConfig: { temperature: 0.8, maxOutputTokens: 2048 }
+        })
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'API error');
+    }
+
+    const data   = await res.json();
+    const reply  = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response received.';
+
+    conversationHistory.push({ role: 'model', parts: [{ text: reply }] });
+
+    setUIState('responding');
+    await new Promise(r => setTimeout(r, 400));
+    addMessage('jarvis', reply);
+    speakText(reply);
+    await new Promise(r => setTimeout(r, 800));
+    setUIState('idle');
+
+  } catch (e) {
+    setUIState('error');
+    addMessage('system', `UPLINK FAILURE: ${e.message}`);
+    await new Promise(r => setTimeout(r, 2000));
+    setUIState('idle');
+  } finally {
+    inputEl.disabled = false;
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+// ─── Mic ─────────────────────────────────────────────────────────────────────
+let recognition = null;
+let micActive = false;
+const micBtn = document.getElementById('mic-btn');
+
+function toggleMic() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    addMessage('system', 'VOICE INPUT NOT SUPPORTED — Use Chrome for microphone access.');
+    return;
+  }
+  if (micActive) {
+    recognition && recognition.stop();
+    return;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SR();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    micActive = true;
+    micBtn.classList.add('active');
+    setUIState('listening');
+    stateLabel.textContent = 'LISTENING';
+    statusText.textContent = 'VOICE INPUT ACTIVE';
+  };
+
+  recognition.onresult = (e) => {
+    const transcript = e.results[0][0].transcript;
+    inputEl.value = transcript;
+    sendMessage();
+  };
+
+  recognition.onerror = (e) => {
+    addMessage('system', `VOICE ERROR: ${e.error}`);
+  };
+
+  recognition.onend = () => {
+    micActive = false;
+    micBtn.classList.remove('active');
+    setUIState('idle');
+  };
+
+  recognition.start();
+}
+
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+function initJarvis() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key) return;
+  apiKey = key;
+  elApiKey = document.getElementById('el-key-input').value.trim();
+  // Save keys to localStorage
+  try {
+    localStorage.setItem('jarvis_gemini_key', apiKey);
+    localStorage.setItem('jarvis_el_key', elApiKey);
+  } catch(e) {}
+  document.getElementById('api-setup').style.display = 'none';
+  inputEl.disabled = false;
+  sendBtn.disabled = false;
+  micBtn.disabled = false;
+  inputEl.focus();
+  const greeting = 'Good evening. All systems are nominal. How may I assist you?';
+  addMessage('system', 'NEURAL LINK ESTABLISHED — J.A.R.V.I.S. ONLINE');
+  addMessage('jarvis', greeting);
+  speakText(greeting);
+  setUIState('idle');
+}
+
+// Auto-load saved keys on startup
+window.addEventListener('load', () => {
+  try {
+    const savedGemini = localStorage.getItem('jarvis_gemini_key');
+    const savedEL = localStorage.getItem('jarvis_el_key');
+    if (savedGemini) {
+      document.getElementById('api-key-input').value = savedGemini;
+    }
+    if (savedEL) {
+      document.getElementById('el-key-input').value = savedEL;
+    }
+    // Auto-connect if both keys saved
+    if (savedGemini) {
+      initJarvis();
+    }
+  } catch(e) {}
+});
+
+document.getElementById('api-key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') initJarvis();
+});
+</script>
+</body>
+</html>
